@@ -96,8 +96,8 @@ When in automode:
 2. Work through these goals one by one, using the available tools as needed
 3. REMEMBER!! You can Read files, write code, LIST the files, and even SEARCH and make edits, use these tools as necessary to accomplish each goal
 4. ALWAYS READ A FILE BEFORE EDITING IT IF YOU ARE MISSING CONTENT. Provide regular updates on your progress
-5. IMPORTANT RULe!! When you know your goals are completed, DO NOT CONTINUE IN POINTLESS BACK AND FORTH CONVERSATIONS with yourself, if you think we achieved the results established to the original request say "AUTOMODE_COMPLETE" in your response to exit the loop!
-6. ULTRA IMPORTANT! You have access to this {iteration_info} amount of iterations you have left to complete the request, you can use this information to make decisions and to provide updates on your progress knowing the amount of responses you have left to complete the request.
+5. When you know your goals are completed, used the end_automode tool to end the automode and return to manual mode
+6. You have access to this {iteration_info} amount of iterations you have left to complete the request, you can use this information to make decisions and to provide updates on your progress knowing the amount of responses you have left to complete the request.
 Answer the user's request using relevant tools (if they are available). Before calling a tool, do some analysis within <thinking></thinking> tags. First, think about which of the provided tools is the relevant tool to answer the user's request. Second, go through each of the required parameters of the relevant tool and determine if the user has directly provided or given enough information to infer a value. When deciding if the parameter can be inferred, carefully consider all the context to see if it supports a specific value. If all of the required parameters are present or can be reasonably inferred, close the thinking tag and proceed with the tool call. BUT, if one of the values for a required parameter is missing, DO NOT invoke the function (not even with fillers for the missing params) and instead, ask the user to provide the missing parameters. DO NOT ask for more information on optional parameters if it is not provided.
 
 """
@@ -145,14 +145,18 @@ def write_to_file(path, content):
     except Exception as e:
         return f"Error writing to file: {str(e)}"
 
-def apply_patch(patch):
+def apply_patch(pwd, patch):
     # write patch content to a tmp file
     tmp_file_path = "/tmp/patch.diff"
+    tmp_file_path_2 = "/tmp/patch2.diff"
     try:
         with open(tmp_file_path, 'w') as f:
             f.write(patch)
-        # apply patch using patch -p0 < tmp_file_path
-        subprocess.run(["git", "apply", tmp_file_path], check=True)
+        # recountdiff to fix up line numbers
+        with open(tmp_file_path_2, 'w') as f:
+            subprocess.run(["recountdiff", tmp_file_path], stdout=f, check=True, cwd=pwd)
+        with open(tmp_file_path_2, 'r') as f:
+            subprocess.run(["patch", "-p1", "--fuzz", "10"], stdin=f, check=True, cwd=pwd)
         return "Patch applied successfully"
     except Exception as e:
         return f"Error applying patch: {str(e)}"
@@ -187,15 +191,19 @@ def tavily_search(query):
     except Exception as e:
         return f"Error performing search: {str(e)}"
 
-def run_cargo_build():
+def run_cargo_build(pwd):
     try:
-        result = subprocess.run(["cargo", "build"], capture_output=True, text=True)
+        result = subprocess.run(["cargo", "build"], capture_output=True, text=True, cwd=pwd)
         if result.returncode == 0:
             return "Cargo build successful. No errors found."
         else:
             return f"Cargo build failed. Errors:\n{result.stderr}"
     except Exception as e:
         return f"Error running cargo build: {str(e)}"
+
+def end_automode():
+    global automode
+    automode = False
 
 tools = [
     {
@@ -236,12 +244,16 @@ tools = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "pwd": {
+                    "type": "string",
+                    "description": "The path to the directory where the Rust project is located"
+                },
                 "patch": {
                     "type": "string",
                     "description": "The multiline git-style patch to apply to the file"
                 }
             },
-            "required": ["patch"]
+            "required": ["pwd", "patch"]
         }
     },
     # {
@@ -308,6 +320,20 @@ tools = [
         "description": "Run 'cargo build' and return the output, including any errors. Use this when you need to build a Rust project and check for compilation errors.",
         "input_schema": {
             "type": "object",
+            "properties": {
+                "pwd": {
+                    "type": "string",
+                    "description": "The path to the directory where the Rust project is located"
+                }
+            },
+            "required": ["pwd"]
+        }
+    },
+    {
+        "name": "end_automode",
+        "description": "End the automode and return to manual mode. Use this when the task is complete and no more iterations are required.",
+        "input_schema": {
+            "type": "object",
             "properties": {},
             "required": []
         }
@@ -322,7 +348,7 @@ def execute_tool(tool_name, tool_input):
     # elif tool_name == "write_to_file":
     #     return write_to_file(tool_input["path"], tool_input.get("content", ""))
     elif tool_name == "apply_patch":
-        return apply_patch(tool_input.get("patch", ""))
+        return apply_patch(tool_input["pwd"], tool_input.get("patch", ""))
     elif tool_name == "read_file":
         return read_file(tool_input["path"])
     elif tool_name == "list_files":
@@ -330,7 +356,9 @@ def execute_tool(tool_name, tool_input):
     elif tool_name == "tavily_search":
         return tavily_search(tool_input["query"])
     elif tool_name == "cargo_build":
-        return run_cargo_build()
+        return run_cargo_build(tool_input["pwd"])
+    elif tool_name == "end_automode":
+        return end_automode()
     else:
         return f"Unknown tool: {tool_name}"
 
