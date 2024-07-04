@@ -27,10 +27,18 @@ CONTINUATION_EXIT_PHRASE = "AUTOMODE_COMPLETE"
 MAX_CONTINUATION_ITERATIONS = 25
 
 # Initialize the Anthropic client
-client = Anthropic(api_key="YOUR API KEY")
+# read the key from ./anthropic.key
+with open("./anthropic.key", "r") as f:
+    anthropic_key = f.read().strip()
+
+client = Anthropic(api_key=anthropic_key)
 
 # Initialize the Tavily client
-tavily = TavilyClient(api_key="YOUR API KEY")
+# read the key from ./tv.key
+with open("./tv.key", "r") as f:
+    tv_key = f.read().strip()
+
+tavily = TavilyClient(api_key=tv_key)
 
 # Set up the conversation memory
 conversation_history = []
@@ -64,6 +72,7 @@ When asked to create a project:
 When asked to make edits or improvements:
 - Use the read_file tool to examine the contents of existing files.
 - Analyze the code and suggest improvements or make necessary edits.
+- You must print a diff of the changes you will make to each file.
 - Use the write_to_file tool to implement changes.
 
 Be sure to consider the type of project (e.g., Python, JavaScript, web application) when determining the appropriate structure and files to include.
