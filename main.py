@@ -159,11 +159,19 @@ def apply_patch(patch):
 
 def read_file(path):
     try:
-        with open(path, 'r') as f:
-            content = f.read()
-        return content
+        result = subprocess.run(["cat", "-n", path], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout
+        else:
+            return f"Read file failed. Errors:\n{result.stderr}"
     except Exception as e:
         return f"Error reading file: {str(e)}"
+    # try:
+    #     with open(path, 'r') as f:
+    #         content = f.read()
+    #     return content
+    # except Exception as e:
+    #     return f"Error reading file: {str(e)}"
 
 def list_files(path="."):
     try:
@@ -178,6 +186,16 @@ def tavily_search(query):
         return response
     except Exception as e:
         return f"Error performing search: {str(e)}"
+
+def run_cargo_build():
+    try:
+        result = subprocess.run(["cargo", "build"], capture_output=True, text=True)
+        if result.returncode == 0:
+            return "Cargo build successful. No errors found."
+        else:
+            return f"Cargo build failed. Errors:\n{result.stderr}"
+    except Exception as e:
+        return f"Error running cargo build: {str(e)}"
 
 tools = [
     {
@@ -246,7 +264,7 @@ tools = [
     # },
     {
         "name": "read_file",
-        "description": "Read the contents of a file at the specified path. Use this when you need to examine the contents of an existing file.",
+        "description": "Read the contents of a file at the specified path and prepend line numbers on each line. Use this when you need to examine the contents of an existing file. Use the line numbers when writing a patch, ignore them otherwise.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -284,6 +302,15 @@ tools = [
             },
             "required": ["query"]
         }
+    },
+    {
+        "name": "cargo_build",
+        "description": "Run 'cargo build' and return the output, including any errors. Use this when you need to build a Rust project and check for compilation errors.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     }
 ]
 
@@ -302,6 +329,8 @@ def execute_tool(tool_name, tool_input):
         return list_files(tool_input.get("path", "."))
     elif tool_name == "tavily_search":
         return tavily_search(tool_input["query"])
+    elif tool_name == "cargo_build":
+        return run_cargo_build()
     else:
         return f"Unknown tool: {tool_name}"
 
@@ -488,7 +517,7 @@ def chat_with_claude(user_input, image_path=None, current_iteration=None, max_it
         }
         conversation_history.append(image_message)
         print_colored("Image message added to conversation history", TOOL_COLOR)
-    else:
+    elif len(conversation_history) == 0 or conversation_history[-1]["role"] != "user":
         conversation_history.append({"role": "user", "content": user_input})
     
     messages = [msg for msg in conversation_history if msg.get('content')]
