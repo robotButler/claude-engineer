@@ -12,6 +12,7 @@ from PIL import Image
 import io
 import re
 from anthropic import Anthropic
+import argparse  # Added import for argument parsing
 
 # Initialize colorama
 init()
@@ -533,14 +534,61 @@ def chat_with_claude(user_input, image_path=None, current_iteration=None, max_it
 
 def main():
     global automode, conversation_history
+
+    # Set up argument parsing
+    parser = argparse.ArgumentParser(description="Claude-3.5-Sonnet Engineer Chat with Image Support")
+    parser.add_argument("--automode", type=int, help="Enter automode with specified number of iterations")
+    parser.add_argument("--input", type=str, help="Initial input for the conversation")
+    args = parser.parse_args()
+
     print_colored("Welcome to the Claude-3.5-Sonnet Engineer Chat with Image Support!", CLAUDE_COLOR)
     print_colored("Type 'exit' to end the conversation.", CLAUDE_COLOR)
     print_colored("Type 'image' to include an image in your message.", CLAUDE_COLOR)
     print_colored("Type 'automode [number]' to enter Autonomous mode with a specific number of iterations.", CLAUDE_COLOR)
     print_colored("While in automode, press Ctrl+C at any time to exit the automode to return to regular chat.", CLAUDE_COLOR)
+
+    if args.automode:
+        automode = True
+        max_iterations = args.automode
+        print_colored(f"Entering automode with {max_iterations} iterations. Press Ctrl+C to exit automode at any time.", TOOL_COLOR)
+        
+        if args.input:
+            user_input = args.input
+        else:
+            user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
+        
+        iteration_count = 0
+        try:
+            while automode and iteration_count < max_iterations:
+                response, exit_continuation = chat_with_claude(user_input, current_iteration=iteration_count+1, max_iterations=max_iterations)
+                process_and_display_response(response)
+                
+                if exit_continuation or CONTINUATION_EXIT_PHRASE in response:
+                    print_colored("Automode completed.", TOOL_COLOR)
+                    automode = False
+                else:
+                    print_colored(f"Continuation iteration {iteration_count + 1} completed.", TOOL_COLOR)
+                    print_colored("Press Ctrl+C to exit automode.", TOOL_COLOR)
+                    user_input = "Continue with the next step."
+                
+                iteration_count += 1
+                
+                if iteration_count >= max_iterations:
+                    print_colored("Max iterations reached. Exiting automode.", TOOL_COLOR)
+                    automode = False
+        except KeyboardInterrupt:
+            print_colored("\nAutomode interrupted by user. Exiting automode.", TOOL_COLOR)
+            automode = False
+            if conversation_history and conversation_history[-1]["role"] == "user":
+                conversation_history.append({"role": "assistant", "content": "Automode interrupted. How can I assist you further?"})
     
+    # Continue with regular chat loop
     while True:
-        user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
+        if args.input and not automode:
+            user_input = args.input
+            args.input = None  # Clear the initial input after first use
+        else:
+            user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
         
         if user_input.lower() == 'exit':
             print_colored("Thank you for chatting. Goodbye!", CLAUDE_COLOR)
