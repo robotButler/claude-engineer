@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+import subprocess
 import json
 from colorama import init, Fore, Style
 from pygments import highlight
@@ -73,8 +74,8 @@ When asked to create a project:
 When asked to make edits or improvements:
 - Use the read_file tool to examine the contents of existing files.
 - Analyze the code and suggest improvements or make necessary edits.
-- You must print a diff of the changes you will make to each file.
-- Use the write_to_file tool to implement changes.
+- You must print the changes as a git-style patch.
+- Use the apply_patch tool to implement changes.
 
 Be sure to consider the type of project (e.g., Python, JavaScript, web application) when determining the appropriate structure and files to include.
 
@@ -144,6 +145,18 @@ def write_to_file(path, content):
     except Exception as e:
         return f"Error writing to file: {str(e)}"
 
+def apply_patch(patch):
+    # write patch content to a tmp file
+    tmp_file_path = "/tmp/patch.diff"
+    try:
+        with open(tmp_file_path, 'w') as f:
+            f.write(patch)
+        # apply patch using patch -p0 < tmp_file_path
+        subprocess.run(["git", "apply", tmp_file_path], check=True)
+        return "Patch applied successfully"
+    except Exception as e:
+        return f"Error applying patch: {str(e)}"
+
 def read_file(path):
     try:
         with open(path, 'r') as f:
@@ -200,23 +213,37 @@ tools = [
         }
     },
     {
-        "name": "write_to_file",
-        "description": "Write content to an existing file at the specified path. Use this when you need to add or update content in an existing file.",
+        "name": "apply_patch",
+        "description": "Modify an existing file by writing a git-style patch and applying it using `git apply`.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {
+                "patch": {
                     "type": "string",
-                    "description": "The path of the file to write to"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write to the file"
+                    "description": "The multiline git-style patch to apply to the file"
                 }
             },
-            "required": ["path", "content"]
+            "required": ["patch"]
         }
     },
+    # {
+    #     "name": "write_to_file",
+    #     "description": "Write content to an existing file at the specified path. Use this when you need to add or update content in an existing file.",
+    #     "input_schema": {
+    #         "type": "object",
+    #         "properties": {
+    #             "path": {
+    #                 "type": "string",
+    #                 "description": "The path of the file to write to"
+    #             },
+    #             "content": {
+    #                 "type": "string",
+    #                 "description": "The content to write to the file"
+    #             }
+    #         },
+    #         "required": ["path", "content"]
+    #     }
+    # },
     {
         "name": "read_file",
         "description": "Read the contents of a file at the specified path. Use this when you need to examine the contents of an existing file.",
@@ -265,8 +292,10 @@ def execute_tool(tool_name, tool_input):
         return create_folder(tool_input["path"])
     elif tool_name == "create_file":
         return create_file(tool_input["path"], tool_input.get("content", ""))
-    elif tool_name == "write_to_file":
-        return write_to_file(tool_input["path"], tool_input.get("content", ""))
+    # elif tool_name == "write_to_file":
+    #     return write_to_file(tool_input["path"], tool_input.get("content", ""))
+    elif tool_name == "apply_patch":
+        return apply_patch(tool_input.get("patch", ""))
     elif tool_name == "read_file":
         return read_file(tool_input["path"])
     elif tool_name == "list_files":
