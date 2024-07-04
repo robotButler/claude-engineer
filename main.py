@@ -96,8 +96,9 @@ When in automode:
 2. Work through these goals one by one, using the available tools as needed
 3. REMEMBER!! You can Read files, write code, LIST the files, and even SEARCH and make edits, use these tools as necessary to accomplish each goal
 4. ALWAYS READ A FILE BEFORE EDITING IT IF YOU ARE MISSING CONTENT. Provide regular updates on your progress
-5. When you know your goals are completed, used the end_automode tool to end the automode and return to manual mode
-6. You have access to this {iteration_info} amount of iterations you have left to complete the request, you can use this information to make decisions and to provide updates on your progress knowing the amount of responses you have left to complete the request.
+5. Do not ask the user for anything! They cannot respond. Do NOT ask if they want to make additional changes.
+6. When your initial goals are completed, used the end_automode tool to end the automode and return to manual mode
+7. You have access to this {iteration_info} amount of iterations you have left to complete the request, you can use this information to make decisions and to provide updates on your progress knowing the amount of responses you have left to complete the request.
 Answer the user's request using relevant tools (if they are available). Before calling a tool, do some analysis within <thinking></thinking> tags. First, think about which of the provided tools is the relevant tool to answer the user's request. Second, go through each of the required parameters of the relevant tool and determine if the user has directly provided or given enough information to infer a value. When deciding if the parameter can be inferred, carefully consider all the context to see if it supports a specific value. If all of the required parameters are present or can be reasonably inferred, close the thinking tag and proceed with the tool call. BUT, if one of the values for a required parameter is missing, DO NOT invoke the function (not even with fillers for the missing params) and instead, ask the user to provide the missing parameters. DO NOT ask for more information on optional parameters if it is not provided.
 
 """
@@ -625,6 +626,9 @@ def main():
     parser = argparse.ArgumentParser(description="Claude-3.5-Sonnet Engineer Chat with Image Support")
     parser.add_argument("--automode", type=int, help="Enter automode with specified number of iterations")
     parser.add_argument("--input", type=str, help="Initial input for the conversation")
+    parser.add_argument("--pwd", type=str, help="The path to the directory where the project is located")
+    parser.add_argument("--file", type=str, help="The path to the file to be added to the initial input")
+    parser.add_argument("--build-tool", type=str, help="The name of the tool to use to build the project")
     args = parser.parse_args()
 
     print_colored("Welcome to the Claude-3.5-Sonnet Engineer Chat with Image Support!", CLAUDE_COLOR)
@@ -642,7 +646,22 @@ def main():
             user_input = args.input
         else:
             user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
-        
+
+        if args.pwd:
+            user_input += f"\nThe project is located at {args.pwd}"
+        if args.file:
+            full_path = os.path.join(args.pwd, args.file)
+            with open(full_path, 'r') as f:
+                user_input += f"\nA file that is important to this task is {args.file} and the content is:\n```\n{f.read()}\n```"
+        if args.build_tool:
+            try:
+                result = execute_tool(args.build_tool, {"pwd": args.pwd})
+                user_input += f"\nThe tool to use to build the project is {args.build_tool} and the result is:\n```\n{result}\n```"
+            except Exception as e:
+                print_colored(f"Error executing tool: {str(e)}", TOOL_COLOR)
+                user_input += f"\nI encountered an error while executing the tool. Please try again."
+
+
         iteration_count = 0
         try:
             while automode and iteration_count < max_iterations:
