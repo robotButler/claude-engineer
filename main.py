@@ -13,6 +13,7 @@ import io
 import re
 from anthropic import Anthropic
 import difflib
+import argparse
 
 # Initialize colorama
 init()
@@ -73,12 +74,8 @@ When asked to create a project:
 When asked to make edits or improvements:
 - Use the read_file tool to examine the contents of existing files.
 - Analyze the code and suggest improvements or make necessary edits.
-<<<<<<< HEAD
-- Use the write_to_file tool to implement changes, providing the full updated file content.
-=======
-- You must print a diff of the changes you will make to each file.
-- Use the write_to_file tool to implement changes.
->>>>>>> 3c9dd3d (remove keys)
+- You must print the changes as a git-style patch.
+- Use the apply_patch tool to implement changes.
 
 Be sure to consider the type of project (e.g., Python, JavaScript, web application) when determining the appropriate structure and files to include.
 
@@ -480,14 +477,63 @@ def process_and_display_response(response):
 
 def main():
     global automode, conversation_history
-    print_colored("Welcome to the Claude-3.5-Sonnet Engineer Chat with Image Support!", CLAUDE_COLOR)
-    print_colored("Type 'exit' to end the conversation.", CLAUDE_COLOR)
-    print_colored("Type 'image' to include an image in your message.", CLAUDE_COLOR)
-    print_colored("Type 'automode [number]' to enter Autonomous mode with a specific number of iterations.", CLAUDE_COLOR)
-    print_colored("While in automode, press Ctrl+C at any time to exit the automode to return to regular chat.", CLAUDE_COLOR)
+
+    # Set up argument parsing
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--automode", type=int, help="Enter automode with a specific number of iterations")
+    parser.add_argument("--prompt", type=str, help="The prompt to start the conversation with")
+    parser.add_argument("--pwd", type=str, help="The path to the directory where the project is located")
+    parser.add_argument("--file", type=str, help="A path to a file to be added to the initial input")
+    parser.add_argument("--build-tool", type=str, help="The name of the tool to use to build the project")
+    args = parser.parse_args()
+
+    if args.automode:
+        automode = True
+        max_iterations = args.automode
+        print_colored(f"Entering automode with {max_iterations} iterations. Press Ctrl+C to exit automode at any time.", TOOL_COLOR)
+        
+        if args.prompt:
+            user_input = args.prompt
+        else:
+            user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
+
+        iteration_count = 0
+        try:
+            while automode and iteration_count < max_iterations:
+                response, exit_continuation = chat_with_claude(user_input, current_iteration=iteration_count+1, max_iterations=max_iterations)
+            process_and_display_response(response)
+
+            if exit_continuation or CONTINUATION_EXIT_PHRASE in response:
+                print_colored("Automode completed.", TOOL_COLOR)
+                automode = False
+            else:
+                print_colored(f"Continuation iteration {iteration_count + 1} completed.", TOOL_COLOR)
+                print_colored("Press Ctrl+C to exit automode.", TOOL_COLOR)
+                user_input = "Continue with the next step."
+
+            iteration_count += 1   
+
+            if iteration_count >= max_iterations:
+                print_colored("Max iterations reached. Exiting automode.", TOOL_COLOR)
+                automode = False
+        except KeyboardInterrupt:
+            print_colored("\nAutomode interrupted by user. Exiting automode.", TOOL_COLOR)
+            automode = False
+            if conversation_history and conversation_history[-1]["role"] == "user":
+                conversation_history.append({"role": "assistant", "content": "Automode interrupted. How can I assist you further?"})
+    else:
+        print_colored("Welcome to the Claude-3.5-Sonnet Engineer Chat with Image Support!", CLAUDE_COLOR)
+        print_colored("Type 'exit' to end the conversation.", CLAUDE_COLOR)
+        print_colored("Type 'image' to include an image in your message.", CLAUDE_COLOR)
+        print_colored("Type 'automode [number]' to enter Autonomous mode with a specific number of iterations.", CLAUDE_COLOR)
+        print_colored("While in automode, press Ctrl+C at any time to exit the automode to return to regular chat.", CLAUDE_COLOR)
     
     while True:
-        user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
+        if args.prompt:
+            user_input = args.prompt
+            args.prompt = None
+        else:
+            user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
         
         if user_input.lower() == 'exit':
             print_colored("Thank you for chatting. Goodbye!", CLAUDE_COLOR)
