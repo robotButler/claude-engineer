@@ -656,7 +656,8 @@ def main():
         if args.build_tool:
             try:
                 result = execute_tool(args.build_tool, {"pwd": args.pwd})
-                user_input += f"\nThe tool to use to build the project is {args.build_tool} and the result is:\n```\n{result}\n```"
+                user_input += f"\nThe tool to use to build the project is {args.build_tool} and the current result is:\n```\n{result}\n```"
+                user_input += f"\nRun the build tool after changes to the project are complete, then fix any errors."
             except Exception as e:
                 print_colored(f"Error executing tool: {str(e)}", TOOL_COLOR)
                 user_input += f"\nI encountered an error while executing the tool. Please try again."
