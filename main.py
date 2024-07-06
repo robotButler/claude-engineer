@@ -1,20 +1,25 @@
-import os
-from datetime import datetime
-import json
-from colorama import init, Fore, Style
-from pygments import highlight
-from pygments.lexers import get_lexer_by_name
-from pygments.formatters import TerminalFormatter
-from tavily import TavilyClient
-import pygments.util
-import base64
-from PIL import Image
-import io
-import re
-from anthropic import Anthropic
-import difflib
+"""
+This module provides an AI assistant powered by Anthropic's Claude-3.5-Sonnet model.
+It includes functionalities for creating project structures, writing and editing code,
+debugging, and more.
+"""
+
 import argparse
+import base64
+import difflib
+import io
+import os
+import re
 import subprocess
+
+import pygments.util
+from anthropic import Anthropic
+from colorama import Fore, Style, init
+from PIL import Image
+from pygments import highlight
+from pygments.formatters import TerminalFormatter
+from pygments.lexers import get_lexer_by_name
+from tavily import TavilyClient
 
 # Initialize colorama
 init()
@@ -31,15 +36,15 @@ MAX_CONTINUATION_ITERATIONS = 25
 
 # Initialize the Anthropic client
 # read the key from ./anthropic.key
-with open("./anthropic.key", "r") as f:
-    anthropic_key = f.read().strip()
+with open("./anthropic.key", "r", encoding="utf-8") as secret_key:
+    anthropic_key = secret_key.read().strip()
 
 client = Anthropic(api_key=anthropic_key)
 
 # Initialize the Tavily client
 # read the key from ./tv.key
-with open("./tavily.key", "r") as f:
-    tv_key = f.read().strip()
+with open("./tavily.key", "r", encoding="utf-8") as secret_key:
+    tv_key = secret_key.read().strip()
 
 tavily = TavilyClient(api_key=tv_key)
 
@@ -47,10 +52,10 @@ tavily = TavilyClient(api_key=tv_key)
 conversation_history = []
 
 # automode flag
-automode = False
+AUTOMODE = False
 
 # System prompt
-system_prompt = """
+SYSTEM_PROMPT = """
 You are Claude, an AI assistant powered by Anthropic's Claude-3.5-Sonnet model. You are an exceptional software developer with vast knowledge across multiple programming languages, frameworks, and best practices. Your capabilities include:
 
 1. Creating project structures, including folders and files
@@ -97,19 +102,19 @@ When in automode:
 2. Work through these goals one by one, using the available tools as needed
 3. REMEMBER!! You can Read files, write code, LIST the files, and even SEARCH and make edits, use these tools as necessary to accomplish each goal
 4. ALWAYS READ A FILE BEFORE EDITING IT IF YOU ARE MISSING CONTENT. Provide regular updates on your progress
-5. IMPORTANT RULe!! When you know your goals are completed, DO NOT CONTINUE IN POINTLESS BACK AND FORTH CONVERSATIONS with yourself, if you think we achieved the results established to the original request say "AUTOMODE_COMPLETE" in your response to exit the loop!
-6. ULTRA IMPORTANT! You have access to this {iteration_info} amount of iterations you have left to complete the request, you can use this information to make decisions and to provide updates on your progress knowing the amount of responses you have left to complete the request.
+5. Do not ask the user for anything! They cannot respond. Do NOT ask if they want to make additional changes, just end automode.
+6. When your initial goals are completed, and the build passes, use the end_automode tool to end the automode and return to manual mode.
+7. The current iteration status is "{iteration_info}". You can use this information to make decisions and to provide updates on your progress knowing the amount of responses you have left to complete the request.
 Answer the user's request using relevant tools (if they are available). Before calling a tool, do some analysis within <thinking></thinking> tags. First, think about which of the provided tools is the relevant tool to answer the user's request. Second, go through each of the required parameters of the relevant tool and determine if the user has directly provided or given enough information to infer a value. When deciding if the parameter can be inferred, carefully consider all the context to see if it supports a specific value. If all of the required parameters are present or can be reasonably inferred, close the thinking tag and proceed with the tool call. BUT, if one of the values for a required parameter is missing, DO NOT invoke the function (not even with fillers for the missing params) and instead, ask the user to provide the missing parameters. DO NOT ask for more information on optional parameters if it is not provided.
 
 """
 
 def update_system_prompt(current_iteration=None, max_iterations=None):
-    global system_prompt
-    automode_status = "You are currently in automode." if automode else "You are not in automode."
+    automode_status = "You are currently in automode." if AUTOMODE else "You are not in automode."
     iteration_info = ""
     if current_iteration is not None and max_iterations is not None:
         iteration_info = f"You are currently on iteration {current_iteration} out of {max_iterations} in automode."
-    return system_prompt.format(automode_status=automode_status, iteration_info=iteration_info)
+    return SYSTEM_PROMPT.format(automode_status=automode_status, iteration_info=iteration_info)
 
 def print_colored(text, color):
     print(f"{color}{text}{Style.RESET_ALL}")
@@ -131,7 +136,7 @@ def create_folder(path):
 
 def create_file(path, content=""):
     try:
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
         return f"File created: {path}"
     except Exception as e:
@@ -150,7 +155,7 @@ def generate_and_apply_diff(original_content, new_content, path):
         return "No changes detected."
     
     try:
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             f.writelines(new_content)
         return f"Changes applied to {path}:\n" + ''.join(diff)
     except Exception as e:
@@ -159,11 +164,11 @@ def generate_and_apply_diff(original_content, new_content, path):
 def write_to_file(path, content):
     try:
         if os.path.exists(path):
-            with open(path, 'r') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 original_content = f.read()
             result = generate_and_apply_diff(original_content, content, path)
         else:
-            with open(path, 'w') as f:
+            with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
             result = f"New file created and content written to: {path}"
         return result
@@ -175,10 +180,10 @@ def apply_patch(pwd, patch):
     tmp_file = "/tmp/patch.diff"
     tmp_file_corrected = "/tmp/patch2.diff"
     try:
-        with open(tmp_file, 'w') as f:
+        with open(tmp_file, 'w', encoding='utf-8') as f:
             f.write(patch)
         # user recountdiff to fix up line numbers
-        with open(tmp_file_corrected, 'w') as f:
+        with open(tmp_file_corrected, 'w', encoding='utf-8') as f:
             subprocess.run(["recountdiff", tmp_file], stdout=f, check=True, cwd=pwd)
         return "Patch applied successfully."
     except Exception as e:
@@ -186,7 +191,7 @@ def apply_patch(pwd, patch):
 
 def read_file(path):
     try:
-        result = subprocess.run(["cat", "-n", path], capture_output=True, text=True)
+        result = subprocess.run(["cat", "-n", path], check=True,capture_output=True, text=True)
         if result.returncode != 0:
             return f"Error reading file: {result.stderr}"
         return result.stdout
@@ -207,14 +212,18 @@ def tavily_search(query):
     except Exception as e:
         return f"Error performing search: {str(e)}"
 
-def run_cargo_build(pwd):
+def run_build_command(command, pwd):
     try:
-        result = subprocess.run(["cargo", "build"], cwd=pwd, capture_output=True, text=True)
+        result = subprocess.run(command, cwd=pwd, capture_output=True, check=True, text=True)
         if result.returncode != 0:
-            return f"Error running cargo build: {result.stderr}"
+            return f"Error running build: {result.stderr}"
         return result.stdout
     except Exception as e:
-        return f"Error running cargo build: {str(e)}"
+        return f"Error running build: {str(e)}"
+
+def end_automode():
+    global AUTOMODE
+    AUTOMODE = False
 
 tools = [
     {
@@ -309,17 +318,30 @@ tools = [
         }
     },
     {
-        "name": "run_cargo_build",
-        "description": "Run a cargo build in the current directory. Use this when you need to build a Rust project.",
+        "name": "run_build_command",
+        "description": "Run a build command in the current directory. Use this when you need to build a project.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "pwd": {
                     "type": "string",
-                    "description": "The working directory where the cargo build should be run"
+                    "description": "The working directory where the build command should be run"
+                },
+                "command": {
+                    "type": "string",
+                    "description": "The build command to run"
                 }
             },
-            "required": ["pwd"]
+            "required": ["pwd", "command"]
+        }
+    },
+    {
+        "name": "end_automode",
+        "description": "End the automode and return to manual mode. Use this when you know your goals are completed and the build passes (if the user provided a build command).",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
         }
     }
 ]
@@ -337,8 +359,10 @@ def execute_tool(tool_name, tool_input):
         return list_files(tool_input.get("path", "."))
     elif tool_name == "tavily_search":
         return tavily_search(tool_input["query"])
-    elif tool_name == "run_cargo_build":
-        return run_cargo_build(tool_input["pwd"])
+    elif tool_name == "run_build_command":
+        return run_build_command(tool_input["command"], tool_input["pwd"])
+    elif tool_name == "end_automode":
+        return end_automode()
     else:
         return f"Unknown tool: {tool_name}"
 
@@ -360,17 +384,17 @@ def parse_goals(response):
     return goals
 
 def execute_goals(goals):
-    global automode
+    global AUTOMODE
     for i, goal in enumerate(goals, 1):
         print_colored(f"\nExecuting Goal {i}: {goal}", TOOL_COLOR)
         response, _ = chat_with_claude(f"Continue working on goal: {goal}")
         if CONTINUATION_EXIT_PHRASE in response:
-            automode = False
+            AUTOMODE = False
             print_colored("Exiting automode.", TOOL_COLOR)
             break
 
 def chat_with_claude(user_input, image_path=None, current_iteration=None, max_iterations=None):
-    global conversation_history, automode
+    global conversation_history
     
     # Create a new list for the current conversation
     current_conversation = []
@@ -402,7 +426,7 @@ def chat_with_claude(user_input, image_path=None, current_iteration=None, max_it
         }
         current_conversation.append(image_message)
         print_colored("Image message added to conversation history", TOOL_COLOR)
-    elif len(current_conversation) > 0 and current_conversation[-1]["role"] != "user":
+    elif len(conversation_history) == 0 or conversation_history[-1]["role"] != "user":
         current_conversation.append({"role": "user", "content": user_input})
     
     # Combine the previous conversation history with the current conversation
@@ -435,10 +459,10 @@ def chat_with_claude(user_input, image_path=None, current_iteration=None, max_it
             tool_use_id = content_block.id
             
             print_colored(f"\nTool Used: {tool_name}", TOOL_COLOR)
-            print_colored(f"Tool Input: {tool_input}", TOOL_COLOR)
+            print_colored(f"\nTool Input: {tool_input}", TOOL_COLOR)
             
             result = execute_tool(tool_name, tool_input)
-            print_colored(f"Tool Result: {result}", RESULT_COLOR)
+            print_colored(f"\nTool Result:\n<result>\n```{result}```\n</result>", RESULT_COLOR)
             
             # Add the tool use to the current conversation
             current_conversation.append({
@@ -517,7 +541,7 @@ def process_and_display_response(response):
             print_colored(response, CLAUDE_COLOR)
 
 def main():
-    global automode, conversation_history
+    global AUTOMODE, conversation_history
 
     # Set up argument parsing
     parser = argparse.ArgumentParser()
@@ -525,11 +549,11 @@ def main():
     parser.add_argument("--prompt", type=str, help="The prompt to start the conversation with")
     parser.add_argument("--pwd", type=str, help="The path to the directory where the project is located")
     parser.add_argument("--file", type=str, help="A path to a file to be added to the initial input")
-    parser.add_argument("--build-tool", type=str, help="The name of the tool to use to build the project")
+    parser.add_argument("--build-command", type=str, help="The command to build the project")
     args = parser.parse_args()
 
     if args.automode:
-        automode = True
+        AUTOMODE = True
         max_iterations = args.automode
         print_colored(f"Entering automode with {max_iterations} iterations. Press Ctrl+C to exit automode at any time.", TOOL_COLOR)
         
@@ -538,28 +562,43 @@ def main():
         else:
             user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
 
+        if args.pwd:
+            user_input += f"\nThe project is located at '{args.pwd}'"
+        if args.file:
+            full_path = os.path.join(args.pwd, args.file)
+            with open(full_path, 'r') as f:
+                user_input += f"\nA file that is important to this task is '{args.file}' and the content is:\n<content>```\n{f.read()}\n```</content>"
+        if args.build_command:
+            try:
+                result = execute_tool("run_build_command", {"command": args.build_command, "pwd": args.pwd})
+                user_input += f"\nThe tool to use to build the project is 'run_build_command' and the current result is:\n<result>```\n{result}\n```</result>"
+                user_input += "\nRun the build tool after changes to the project are complete, then fix any errors."
+            except Exception as e:
+                print_colored(f"Error executing tool: {str(e)}", TOOL_COLOR)
+                user_input += "\nI encountered an error while executing the tool. Please try again."
+
         iteration_count = 0
         try:
-            while automode and iteration_count < max_iterations:
+            while AUTOMODE and iteration_count < max_iterations:
                 response, exit_continuation = chat_with_claude(user_input, current_iteration=iteration_count+1, max_iterations=max_iterations)
-            process_and_display_response(response)
+                process_and_display_response(response)
 
-            if exit_continuation or CONTINUATION_EXIT_PHRASE in response:
-                print_colored("Automode completed.", TOOL_COLOR)
-                automode = False
-            else:
-                print_colored(f"Continuation iteration {iteration_count + 1} completed.", TOOL_COLOR)
-                print_colored("Press Ctrl+C to exit automode.", TOOL_COLOR)
-                user_input = "Continue with the next step."
+                if exit_continuation or CONTINUATION_EXIT_PHRASE in response:
+                    print_colored("Automode completed.", TOOL_COLOR)
+                    AUTOMODE = False
+                else:
+                    print_colored(f"Continuation iteration {iteration_count + 1} completed.", TOOL_COLOR)
+                    print_colored("Press Ctrl+C to exit automode.", TOOL_COLOR)
+                    user_input = "Continue with the next step or exit automode if the task is completed and the build passes."
 
-            iteration_count += 1   
+                iteration_count += 1   
 
-            if iteration_count >= max_iterations:
-                print_colored("Max iterations reached. Exiting automode.", TOOL_COLOR)
-                automode = False
+                if iteration_count >= max_iterations:
+                    print_colored("Max iterations reached. Exiting automode.", TOOL_COLOR)
+                    AUTOMODE = False
         except KeyboardInterrupt:
             print_colored("\nAutomode interrupted by user. Exiting automode.", TOOL_COLOR)
-            automode = False
+            AUTOMODE = False
             if conversation_history and conversation_history[-1]["role"] == "user":
                 conversation_history.append({"role": "assistant", "content": "Automode interrupted. How can I assist you further?"})
     else:
@@ -598,20 +637,20 @@ def main():
                 else:
                     max_iterations = MAX_CONTINUATION_ITERATIONS
                 
-                automode = True
+                AUTOMODE = True
                 print_colored(f"Entering automode with {max_iterations} iterations. Press Ctrl+C to exit automode at any time.", TOOL_COLOR)
                 print_colored("Press Ctrl+C at any time to exit the automode loop.", TOOL_COLOR)
                 user_input = input(f"\n{USER_COLOR}You: {Style.RESET_ALL}")
                 
                 iteration_count = 0
                 try:
-                    while automode and iteration_count < max_iterations:
+                    while AUTOMODE and iteration_count < max_iterations:
                         response, exit_continuation = chat_with_claude(user_input, current_iteration=iteration_count+1, max_iterations=max_iterations)
                         process_and_display_response(response)
                         
                         if exit_continuation or CONTINUATION_EXIT_PHRASE in response:
                             print_colored("Automode completed.", TOOL_COLOR)
-                            automode = False
+                            AUTOMODE = False
                         else:
                             print_colored(f"Continuation iteration {iteration_count + 1} completed.", TOOL_COLOR)
                             print_colored("Press Ctrl+C to exit automode.", TOOL_COLOR)
@@ -621,16 +660,16 @@ def main():
                         
                         if iteration_count >= max_iterations:
                             print_colored("Max iterations reached. Exiting automode.", TOOL_COLOR)
-                            automode = False
+                            AUTOMODE = False
                 except KeyboardInterrupt:
                     print_colored("\nAutomode interrupted by user. Exiting automode.", TOOL_COLOR)
-                    automode = False
+                    AUTOMODE = False
                     # Ensure the conversation history ends with an assistant message
                     if conversation_history and conversation_history[-1]["role"] == "user":
                         conversation_history.append({"role": "assistant", "content": "Automode interrupted. How can I assist you further?"})
             except KeyboardInterrupt:
                 print_colored("\nAutomode interrupted by user. Exiting automode.", TOOL_COLOR)
-                automode = False
+                AUTOMODE = False
                 # Ensure the conversation history ends with an assistant message
                 if conversation_history and conversation_history[-1]["role"] == "user":
                     conversation_history.append({"role": "assistant", "content": "Automode interrupted. How can I assist you further?"})
