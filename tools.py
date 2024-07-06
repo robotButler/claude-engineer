@@ -77,6 +77,19 @@ CLAUDE_TOOLS = [
         }
     },
     {
+        "name": "git_ls",
+        "description": "List all files tracked by git in a directory. Use this when you need to see the project's file tree.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The path of the folder to list (default: current directory)"
+                }
+            }
+        }
+    },
+    {
         "name": "tavily_search",
         "description": "Perform a web search using Tavily API to get up-to-date information or additional context. Use this when you need current information or feel a search could provide a better answer.",
         "input_schema": {

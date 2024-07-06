@@ -72,6 +72,7 @@ conversation_history = []
 
 # automode flag
 AUTOMODE = False
+DEBUG = False
 
 OPENAI_TOOLS = []
 BEDROCK_TOOLS = []
@@ -143,6 +144,8 @@ def write_to_file(path, content):
         return f"Error writing to file: {str(e)}"
 
 def apply_patch(pwd, patch):
+    if DEBUG:
+        print(f"Applying patch:\n```\n{patch}\n```")
     # write patch content to a tmp file
     tmp_file = "/tmp/patch.diff"
     tmp_file_corrected = "/tmp/patch2.diff"
@@ -170,6 +173,15 @@ def list_files(path="."):
     try:
         files = os.listdir(path)
         return "\n".join(files)
+    except Exception as e:
+        return f"Error listing files: {str(e)}"
+
+def git_ls(path="."):
+    try:
+        result = subprocess.run(["git", "ls-tree", "HEAD", "."], cwd=path, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            return f"Error listing files: {result.stderr}"
+        return result.stdout
     except Exception as e:
         return f"Error listing files: {str(e)}"
 
@@ -202,6 +214,8 @@ def execute_tool(tool_name, tool_input):
         return read_file(tool_input["path"])
     elif tool_name == "list_files":
         return list_files(tool_input.get("path", "."))
+    elif tool_name == "git_ls":
+        return git_ls(tool_input.get("path", "."))
     elif tool_name == "tavily_search":
         return tavily_search(tool_input["query"])
     elif tool_name == "run_build_command":
@@ -279,6 +293,8 @@ def chat_with_llm(user_input, image_path=None, current_iteration=None, max_itera
 
     try:
         if model.startswith("claude"):
+            if DEBUG:
+                print(f"Claude messages: {json.dumps(messages, indent=2)}", TOOL_COLOR)
             response = anthropic_client.messages.create(
                 model=model,
                 max_tokens=4000,
@@ -301,7 +317,7 @@ def chat_with_llm(user_input, image_path=None, current_iteration=None, max_itera
                     new_msg["content"] = msg["content"]
                 openai_messages.append(new_msg)
 
-            if debug:
+            if DEBUG:
                 debug_messages = [{"role": m["role"]} for m in openai_messages]
                 print(f"OpenAI messages: {json.dumps(debug_messages, indent=2)}", TOOL_COLOR)
             response = openai_client.chat.completions.create(
@@ -437,7 +453,7 @@ def chat_with_llm(user_input, image_path=None, current_iteration=None, max_itera
             exit_continuation = True
 
     # Update the global conversation history
-    conversation_history = messages + current_conversation
+    conversation_history += current_conversation
 
     return assistant_response, exit_continuation
 
@@ -496,21 +512,30 @@ def get_bedrock_tools(tools):
     }
 
 def main():
-    global AUTOMODE, OPENAI_TOOLS, BEDROCK_TOOLS, conversation_history
+    global AUTOMODE, OPENAI_TOOLS, BEDROCK_TOOLS, conversation_history, DEBUG
 
     # Set up argument parsing
     parser = argparse.ArgumentParser()
     parser.add_argument("--automode", type=int, help="Enter automode with a specific number of iterations")
     parser.add_argument("--prompt", type=str, help="The prompt to start the conversation with")
     parser.add_argument("--pwd", type=str, help="The path to the directory where the project is located")
-    parser.add_argument("--file", type=str, help="A path to a file to be added to the initial input")
+    parser.add_argument("--file", nargs="+", help="A path to a file to be added to the initial input. Use '--file-<description>' to add a file with a description, e.g. '--file-error-log'")
     parser.add_argument("--build-command", type=str, help="The command to build the project")
     parser.add_argument("--model", type=str, default="claude-3-5-sonnet-20240620", help="The LLM model to use (claude-3-5-sonnet-20240620, gpt-4o, gpt-4-turbo, gpt-3.5-turbo, bedrock-claude)")
     parser.add_argument("--debug", action="store_true", help="Debug logging")
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    files_and_descriptions = {}
+    # get the index of any unknown arguments starting with --file-
+    file_indexes = [i for i, arg in enumerate(unknown) if arg.startswith("--file-")]
+    for index in file_indexes:
+        # get the description and file path
+        description = unknown[index][7:].replace("-", " ").title()
+        file = unknown[index + 1]
+        files_and_descriptions[description] = file
 
     if args.debug:
         print_colored("Debug mode enabled.", TOOL_COLOR)
+        DEBUG = True
 
     # Generate an openai-compatible TOOLS object by transforming CLAUDE_TOOLS
     OPENAI_TOOLS = get_openai_tools(CLAUDE_TOOLS)
@@ -528,10 +553,18 @@ def main():
 
         if args.pwd:
             user_input += f"\nThe project is located at '{args.pwd}'"
+            user_input += f"\nThe output of ls -a in the project directory is:\n<content>```\n{execute_tool('list_files', {'path': args.pwd})}\n```</content>"
+            user_input += f"\nThe output of git ls-tree HEAD in the project directory is:\n<content>```\n{execute_tool('git_ls', {'path': args.pwd})}\n```</content>"
         if args.file:
-            full_path = os.path.join(args.pwd, args.file)
-            with open(full_path, 'r') as f:
-                user_input += f"\nA file that is important to this task is '{args.file}' and the content is:\n<content>```\n{f.read()}\n```</content>"
+            for file in args.file:
+                full_path = os.path.join(args.pwd, file)
+                with open(full_path, 'r') as f:
+                    user_input += f"\nA file that is important to this task is '{file}' and the content is:\n<content>```\n{f.read()}\n```</content>"
+        if files_and_descriptions:
+            for description, path in files_and_descriptions.items():
+                full_path = os.path.join(args.pwd, path)
+                with open(full_path, 'r') as f:
+                    user_input += f"\nAdditional context: '{description}':\n<content>```\n{f.read()}\n```</content>"
         if args.build_command:
             try:
                 result = execute_tool("run_build_command", {"command": args.build_command, "pwd": args.pwd})
