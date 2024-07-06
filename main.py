@@ -14,6 +14,7 @@ import re
 from anthropic import Anthropic
 import difflib
 import argparse
+import subprocess
 
 # Initialize colorama
 init()
@@ -169,6 +170,20 @@ def write_to_file(path, content):
     except Exception as e:
         return f"Error writing to file: {str(e)}"
 
+def apply_patch(pwd, patch):
+    # write patch content to a tmp file
+    tmp_file = "/tmp/patch.diff"
+    tmp_file_corrected = "/tmp/patch2.diff"
+    try:
+        with open(tmp_file, 'w') as f:
+            f.write(patch)
+        # user recountdiff to fix up line numbers
+        with open(tmp_file_corrected, 'w') as f:
+            subprocess.run(["recountdiff", tmp_file], stdout=f, check=True, cwd=pwd)
+        return "Patch applied successfully."
+    except Exception as e:
+        return f"Error applying patch: {str(e)}"
+
 def read_file(path):
     try:
         with open(path, 'r') as f:
@@ -225,21 +240,21 @@ tools = [
         }
     },
     {
-        "name": "write_to_file",
-        "description": "Write content to a file at the specified path. If the file exists, only the necessary changes will be applied. If the file doesn't exist, it will be created. Always provide the full intended content of the file.",
+        "name": "apply_patch",
+        "description": "Apply a patch to a file or directory. Use this when you need to make changes to an existing file or directory.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {
+                "pwd": {
                     "type": "string",
-                    "description": "The path of the file to write to"
+                    "description": "The working directory where the patch should be applied"
                 },
-                "content": {
+                "patch": {
                     "type": "string",
-                    "description": "The full content to write to the file"
+                    "description": "The patch to apply"
                 }
             },
-            "required": ["path", "content"]
+            "required": ["pwd", "patch"]
         }
     },
     {
@@ -290,8 +305,8 @@ def execute_tool(tool_name, tool_input):
         return create_folder(tool_input["path"])
     elif tool_name == "create_file":
         return create_file(tool_input["path"], tool_input.get("content", ""))
-    elif tool_name == "write_to_file":
-        return write_to_file(tool_input["path"], tool_input["content"])
+    elif tool_name == "apply_patch":
+        return apply_patch(tool_input["pwd"], tool_input["patch"])
     elif tool_name == "read_file":
         return read_file(tool_input["path"])
     elif tool_name == "list_files":
