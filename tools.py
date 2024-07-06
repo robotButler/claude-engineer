@@ -1,4 +1,4 @@
-TOOLS = [
+CLAUDE_TOOLS = [
     {
         "name": "create_folder",
         "description": "Create a new folder at the specified path. Use this when you need to create a new directory in the project structure.",
