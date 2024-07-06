@@ -186,9 +186,10 @@ def apply_patch(pwd, patch):
 
 def read_file(path):
     try:
-        with open(path, 'r') as f:
-            content = f.read()
-        return content
+        result = subprocess.run(["cat", "-n", path], capture_output=True, text=True)
+        if result.returncode != 0:
+            return f"Error reading file: {result.stderr}"
+        return result.stdout
     except Exception as e:
         return f"Error reading file: {str(e)}"
 
@@ -205,6 +206,15 @@ def tavily_search(query):
         return response
     except Exception as e:
         return f"Error performing search: {str(e)}"
+
+def run_cargo_build(pwd):
+    try:
+        result = subprocess.run(["cargo", "build"], cwd=pwd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return f"Error running cargo build: {result.stderr}"
+        return result.stdout
+    except Exception as e:
+        return f"Error running cargo build: {str(e)}"
 
 tools = [
     {
@@ -259,7 +269,7 @@ tools = [
     },
     {
         "name": "read_file",
-        "description": "Read the contents of a file at the specified path. Use this when you need to examine the contents of an existing file.",
+        "description": "Read the contents of a file at the specified path and prepend line numbers on each line. Use this when you need to examine the contents of an existing file. Use the line numbers when writing a patch, ignore them otherwise.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -297,6 +307,20 @@ tools = [
             },
             "required": ["query"]
         }
+    },
+    {
+        "name": "run_cargo_build",
+        "description": "Run a cargo build in the current directory. Use this when you need to build a Rust project.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pwd": {
+                    "type": "string",
+                    "description": "The working directory where the cargo build should be run"
+                }
+            },
+            "required": ["pwd"]
+        }
     }
 ]
 
@@ -313,6 +337,8 @@ def execute_tool(tool_name, tool_input):
         return list_files(tool_input.get("path", "."))
     elif tool_name == "tavily_search":
         return tavily_search(tool_input["query"])
+    elif tool_name == "run_cargo_build":
+        return run_cargo_build(tool_input["pwd"])
     else:
         return f"Unknown tool: {tool_name}"
 
@@ -376,7 +402,7 @@ def chat_with_claude(user_input, image_path=None, current_iteration=None, max_it
         }
         current_conversation.append(image_message)
         print_colored("Image message added to conversation history", TOOL_COLOR)
-    else:
+    elif len(current_conversation) > 0 and current_conversation[-1]["role"] != "user":
         current_conversation.append({"role": "user", "content": user_input})
     
     # Combine the previous conversation history with the current conversation
