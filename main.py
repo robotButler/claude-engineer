@@ -151,12 +151,13 @@ def apply_patch(pwd, patch):
     tmp_file_corrected = "/tmp/patch2.diff"
     try:
         with open(tmp_file, 'w', encoding='utf-8') as f:
-            f.write(patch)
+            # add a newline at the end of the patch
+            f.write(patch + "\n")
         # user recountdiff to fix up line numbers
         with open(tmp_file_corrected, 'w', encoding='utf-8') as f:
             subprocess.run(["recountdiff", tmp_file], stdout=f, check=True, cwd=pwd)
         with open(tmp_file_corrected, 'r', encoding='utf-8') as f:
-            result = subprocess.run(["patch", "-p0", "-f", "--fuzz", "10"], stdin=f, cwd=pwd)
+            result = subprocess.run(["patch", "-p1", "-f", "--fuzz", "10"], stdin=f, cwd=pwd, capture_output=True, text=True)
             if result.returncode != 0:
                 return f"Error applying patch: <stderr>\n```{result.stderr}```\n</stderr>\n<stdout>\n```{result.stdout}```\n</stdout>"
         return "Patch applied successfully."
@@ -291,65 +292,66 @@ def chat_with_llm(user_input, image_path=None, current_iteration=None, max_itera
     # Combine the previous conversation history with the current conversation
     messages = conversation_history + current_conversation
 
-    try:
-        if model.startswith("claude"):
-            if DEBUG:
-                print(f"Claude messages: {json.dumps(messages, indent=2)}", TOOL_COLOR)
-            response = anthropic_client.messages.create(
-                model=model,
-                max_tokens=4000,
-                system=get_system_prompt(current_iteration, max_iterations),
-                messages=messages,
-                tools=CLAUDE_TOOLS,
-                tool_choice={"type": "auto"}
-            )
-        elif model.startswith("gpt"):
-            openai_messages = [{"role": "system", "content": get_system_prompt(current_iteration, max_iterations)}]
-            for msg in messages:
-                new_msg = {
-                    "role": msg["role"],
-                }
-                if "tool_calls" in msg:
-                    new_msg["tool_calls"] = msg["tool_calls"]
-                if "tool_call_id" in msg:
-                    new_msg["tool_call_id"] = msg["tool_call_id"]
-                if "content" in msg:
-                    new_msg["content"] = msg["content"]
-                openai_messages.append(new_msg)
+    if model.startswith("claude"):
+        if DEBUG:
+            print(f"Claude messages: {json.dumps(messages, indent=2)}", TOOL_COLOR)
+        response = anthropic_client.messages.create(
+            model=model,
+            max_tokens=4000,
+            system=get_system_prompt(current_iteration, max_iterations),
+            messages=messages,
+            tools=CLAUDE_TOOLS,
+            tool_choice={"type": "auto"}
+        )
+    elif model.startswith("gpt"):
+        openai_messages = [{"role": "system", "content": get_system_prompt(current_iteration, max_iterations)}]
+        for msg in messages:
+            new_msg = {
+                "role": msg["role"],
+            }
+            if "tool_calls" in msg:
+                new_msg["tool_calls"] = msg["tool_calls"]
+            if "tool_call_id" in msg:
+                new_msg["tool_call_id"] = msg["tool_call_id"]
+            if "content" in msg:
+                new_msg["content"] = msg["content"]
+            openai_messages.append(new_msg)
 
-            if DEBUG:
-                debug_messages = [{"role": m["role"]} for m in openai_messages]
-                print(f"OpenAI messages: {json.dumps(debug_messages, indent=2)}", TOOL_COLOR)
-            response = openai_client.chat.completions.create(
-                model=model,
-                messages=openai_messages,
-                max_tokens=4000,
-                tools=OPENAI_TOOLS,
-                tool_choice="auto")
-        elif model == "bedrock-claude":
-            bedrock_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
-            response = bedrock_client.converse(
-                modelId="anthropic.claude-3-5-sonnet-20240620-v1:0",
-                messages=bedrock_messages,
-                system=get_system_prompt(current_iteration, max_iterations),
-                tool_config=BEDROCK_TOOLS,
-                inference_config=json.dumps({
-                    "maxTokens": 4000,
-                    "temperature": 0.7,
-                    "topP": 0.999,
-                })
-            )
-        else:
-            raise ValueError(f"Unsupported model: {model}")
-    except Exception as e:
-        print_colored(f"Error calling LLM API: {str(e)}", TOOL_COLOR)
-        return "I'm sorry, there was an error communicating with the AI. Please try again.", False
+        if DEBUG:
+            debug_messages = [{"role": m["role"], "content": m["content"][:500] if "content" in m else "-", "tool_calls": len(m["tool_calls"]) if "tool_calls" in m else "-"} for m in openai_messages]
+            print(f"OpenAI messages: {json.dumps(debug_messages, indent=2)}", TOOL_COLOR)
+        response = openai_client.chat.completions.create(
+            model=model,
+            messages=openai_messages,
+            max_tokens=4000,
+            tools=OPENAI_TOOLS,
+            tool_choice="auto")
+    elif model == "bedrock-claude":
+        bedrock_messages = [{"role": msg["role"], "content": [{"text": msg["content"]} if isinstance(msg["content"], str) else msg["content"]]} for msg in messages]
+        if DEBUG:
+            print(f"Bedrock messages: {json.dumps(bedrock_messages, indent=2)}", TOOL_COLOR)
+        response = bedrock_client.converse(
+            # modelId="anthropic.claude-3-5-sonnet-20240620-v1:0",
+            modelId="anthropic.claude-3-sonnet-20240229-v1:0",
+            messages=bedrock_messages,
+            system=[{"text": get_system_prompt(current_iteration, max_iterations)}],
+            toolConfig=BEDROCK_TOOLS,
+            inferenceConfig={
+                "maxTokens": 4000,
+                "temperature": 0.7,
+                "topP": 0.999,
+            }
+        )
+    else:
+        raise ValueError(f"Unsupported model: {model}")
 
     assistant_response = ""
     exit_continuation = False
 
     if model.startswith("claude"):
         for content_block in response.content:
+            if DEBUG:
+                print(f"Content block: {json.dumps(content_block, indent=2)}", TOOL_COLOR)
             if content_block.type == "text":
                 assistant_response += content_block.text
                 if CONTINUATION_EXIT_PHRASE in content_block.text:
@@ -409,32 +411,106 @@ def chat_with_llm(user_input, image_path=None, current_iteration=None, max_itera
                 except Exception as e:
                     print_colored(f"Error in tool response: {str(e)}", TOOL_COLOR)
                     assistant_response += "\nI encountered an error while processing the tool result. Please try again."
+        if assistant_response != "":
+            current_conversation.append({
+                "role": "assistant",
+                "content": assistant_response
+            })
+    elif model == "bedrock-claude":
+        message = response["output"]["message"]
+        print(message)
+        for content_block in message["content"]:
+            if "text" in content_block:
+                assistant_response += content_block["text"]
+                if CONTINUATION_EXIT_PHRASE in content_block["text"]:
+                    exit_continuation = True
+            elif "tool_use" in content_block:
+                tool_name = content_block["tool_use"]["name"]
+                tool_input = content_block["tool_use"]["input"]
+                tool_use_id = content_block["tool_use"]["toolUseId"]
+
+                print_colored(f"\nTool Used: {tool_name}", TOOL_COLOR)
+                print_colored(f"\nTool Input: {tool_input}", TOOL_COLOR)
+
+                result = execute_tool(tool_name, tool_input)
+                print_colored(f"\nTool Result:\n<result>\n```{result}```\n</result>", RESULT_COLOR)
+
+                # Add the tool use to the current conversation
+                current_conversation.append({
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": tool_use_id,
+                            "name": tool_name,
+                            "input": tool_input
+                        }
+                    ]
+                })
+
+                # Add the tool result to the current conversation
+                current_conversation.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": result
+                        }
+                    ]
+                })
+
+                # Update the messages with the new tool use and result
+                messages = conversation_history + current_conversation
+
+                try:
+                    tool_response = bedrock_client.converse(
+                        modelId="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                        messages=messages,
+                        system=get_system_prompt(current_iteration, max_iterations),
+                        toolConfig=BEDROCK_TOOLS,
+                        inferenceConfig=json.dumps({
+                            "maxTokens": 4000,
+                            "temperature": 0.7,
+                            "topP": 0.999,
+                        }),
+                        maxTokens=4000,
+                        toolChoice={"type": "auto"}
+                    )
+
+                    for tool_content_block in tool_response.content:
+                        if tool_content_block.type == "text":
+                            assistant_response += tool_content_block.text
+                except Exception as e:
+                    print_colored(f"Error in tool response: {str(e)}", TOOL_COLOR)
+                    assistant_response += "\nI encountered an error while processing the tool result. Please try again."
         current_conversation.append({
             "role": "assistant",
             "content": assistant_response
         })
+
     elif model.startswith("gpt"):
         msg = response.choices[0].message
         if msg.tool_calls:
-            tool_name = msg.tool_calls[0].function.name
-            tool_input = eval(msg.tool_calls[0].function.arguments)
-            tool_use_id = msg.tool_calls[0].id
             current_conversation.append({
                 "role": msg.role,
-                "tool_call_id": tool_use_id,
                 "tool_calls": msg.tool_calls
             })
-            print_colored(f"\nTool Used: {tool_name}", TOOL_COLOR)
-            print_colored(f"\nTool Input: {tool_input}", TOOL_COLOR)
-            result = execute_tool(tool_name, tool_input)
-            print_colored(f"\nTool Result:\n<result>\n```{result}```\n</result>", RESULT_COLOR)
-            # add the tool use to the current conversation
-            current_conversation.append({
-                "role": "tool",
-                "tool_call_id": tool_use_id,
-                "name": tool_name,
-                "content": result
-            })
+            for tool_call in msg.tool_calls:
+                tool_name = tool_call.function.name
+                tool_input = eval(tool_call.function.arguments)
+                tool_use_id = tool_call.id
+                print_colored(f"\nTool Used: {tool_name}", TOOL_COLOR)
+                print_colored(f"\nTool Input: {tool_input}", TOOL_COLOR)
+                result = execute_tool(tool_name, tool_input)
+                print_colored(f"\nTool Result:\n<result>\n```{result}```\n</result>", RESULT_COLOR)
+                # add the tool use to the current conversation
+                current_conversation.append({
+                    "role": "tool",
+                    "tool_call_id": tool_use_id,
+                    "name": tool_name,
+                    "content": result
+                })
         elif msg.content:
             current_conversation.append({
                 "role": msg.role,
@@ -442,15 +518,6 @@ def chat_with_llm(user_input, image_path=None, current_iteration=None, max_itera
             })
             if CONTINUATION_EXIT_PHRASE in msg.content:
                 exit_continuation = True
-
-    elif model == "bedrock-claude":
-        assistant_response = json.loads(response.body.read()).completion
-        current_conversation.append({
-            "role": "assistant",
-            "content": assistant_response
-        })
-        if CONTINUATION_EXIT_PHRASE in assistant_response:
-            exit_continuation = True
 
     # Update the global conversation history
     conversation_history += current_conversation
@@ -508,7 +575,7 @@ def get_bedrock_tools(tools):
         })
     return {
         "tools": bedrock_tools,
-        "tool_choice": "auto"
+        "toolChoice": {"auto": {}}
     }
 
 def main():
@@ -559,7 +626,7 @@ def main():
             for file in args.file:
                 full_path = os.path.join(args.pwd, file)
                 with open(full_path, 'r') as f:
-                    user_input += f"\nA file that is important to this task is '{file}' and the content is:\n<content>```\n{f.read()}\n```</content>"
+                    user_input += f"\nA file that is important to this task is '{full_path}' and the content is:\n<content>```\n{f.read()}\n```</content>"
         if files_and_descriptions:
             for description, path in files_and_descriptions.items():
                 full_path = os.path.join(args.pwd, path)
